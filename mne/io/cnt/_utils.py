@@ -155,7 +155,6 @@ def _compute_robust_event_table_position(fid):
 
     fid.seek(SETUP_EVENTTABLEPOS_OFFSET)
     (event_table_pos,) = np.frombuffer(fid.read(4), dtype='<i4')
-    fid.seek(SETUP_EVENTTABLEPOS_OFFSET)
 
     n_bytes, event_table_pos = _infer_n_bytes_event_table_pos(event_table_pos)
 
