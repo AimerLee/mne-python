@@ -113,22 +113,33 @@ def _compute_robust_event_table_position(fid):
         Xxx xxxxxxxxxxx.
     """
 
+    def _obtain_num_suffix(num, length=32):
+        """Return the last `length` bits of the number."""
+        return bin(num).lstrip('0b')[-length:]
+
     def _infer_n_bytes_event_table_pos(readed_event_table_pos):
-        readed_event_table_pos_feature = np.binary_repr(
-            readed_event_table_pos).lstrip('-')
+        """Infer the data format of CNT file and the event table position.
+
+        Use `n_samples`, `n_channels` to infer the correct event table position
+        and the data format of the cnt file, even if the event_table_pos in
+        the SETUP section overflows.
+
+        Returns:
+        -------
+        n_bytes: the number of bytes for each samples
+        event_table_pos: the position of the event table in the cnt file
+        """
+        readed_event_table_pos_feature = _obtain_num_suffix(np.uint32(readed_event_table_pos))
 
         for n_bytes in [2, 4]:
             computed_event_table_pos = (
-                900 + 75 * int(n_channels) +
-                n_bytes * int(n_channels) * int(n_samples))
-
-            if (
-                np.binary_repr(computed_event_table_pos)
-                .endswith(readed_event_table_pos_feature)
-            ):
+                    900 + 75 * int(n_channels) +
+                    n_bytes * int(n_channels) * int(n_samples))
+            computed_event_table_pos_feature = _obtain_num_suffix(computed_event_table_pos)
+            if computed_event_table_pos_feature == readed_event_table_pos_feature:
                 return n_bytes, computed_event_table_pos
 
-        raise Exception("event_table_dismatch")
+        raise Exception("Event table position cannot be configured correctly.")
 
     SETUP_NCHANNELS_OFFSET = 370
     SETUP_NSAMPLES_OFFSET = 864
@@ -144,6 +155,7 @@ def _compute_robust_event_table_position(fid):
 
     fid.seek(SETUP_EVENTTABLEPOS_OFFSET)
     (event_table_pos,) = np.frombuffer(fid.read(4), dtype='<i4')
+    fid.seek(SETUP_EVENTTABLEPOS_OFFSET)
 
     n_bytes, event_table_pos = _infer_n_bytes_event_table_pos(event_table_pos)
 
