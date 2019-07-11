@@ -7,6 +7,7 @@ from collections import namedtuple
 from math import modf
 from datetime import datetime
 import numpy as np
+from os import SEEK_END
 
 from ...utils import warn
 
@@ -96,7 +97,7 @@ def _session_date_2_meas_date(session_date, date_format):
         return (int_part, frac_part)
 
 
-def _compute_robust_event_table_position(fid):
+def _compute_robust_event_table_position(fid, data_format):
     """Compute `event_table_position`.
 
     When recording event_table_position is computed (as accomulation). If the
@@ -112,51 +113,64 @@ def _compute_robust_event_table_position(fid):
     x_xxxxxxxx : xxxxxxxx xx Xxxxxxxxxxx
         Xxx xxxxxxxxxxx.
     """
-
-    def _obtain_num_suffix(num, length=32):
-        """Return the last `length` bits of the number."""
-        return bin(num).lstrip('0b')[-length:]
-
-    def _infer_n_bytes_event_table_pos(readed_event_table_pos):
-        """Infer the data format of CNT file and the event table position.
-
-        Use `n_samples`, `n_channels` to infer the correct event table position
-        and the data format of the cnt file, even if the event_table_pos in
-        the SETUP section overflows.
-
-        Returns:
-        -------
-        n_bytes: the number of bytes for each samples
-        event_table_pos: the position of the event table in the cnt file
-        """
-        readed_event_table_pos_feature = _obtain_num_suffix(np.uint32(readed_event_table_pos))
-
-        for n_bytes in [2, 4]:
-            computed_event_table_pos = (
-                    900 + 75 * int(n_channels) +
-                    n_bytes * int(n_channels) * int(n_samples))
-            computed_event_table_pos_feature = _obtain_num_suffix(computed_event_table_pos)
-            if computed_event_table_pos_feature == readed_event_table_pos_feature:
-                return n_bytes, computed_event_table_pos
-
-        raise Exception("Event table position cannot be configured correctly.")
-
     SETUP_NCHANNELS_OFFSET = 370
     SETUP_NSAMPLES_OFFSET = 864
     SETUP_EVENTTABLEPOS_OFFSET = 886
 
+    def get_most_possible_sol(fid, possible_n_bytes, n_samples, n_channels):
+        """Find the most possible solution
+
+        Since both event table position and n_bytes has many possible values,
+        and n_samples might be not so accurate, distance between the possible
+        event table position and calculated event table position is used to
+        find the most possible combination of the event table position and
+        n_bytes.
+
+        When the distance of the solution find is not equals to 0, there is
+        a mismatch between the n_samples and the event_table_pos.
+        """
+        sol_table = []
+        for event_table_pos in possible_event_table_pos(fid):
+            for n_bytes in possible_n_bytes:
+                calc_event_table_pos = 900 + 75 * n_channels + \
+                                       n_bytes * n_channels * n_samples
+                distance = abs(calc_event_table_pos - event_table_pos)
+
+                if distance == 0:
+                    return event_table_pos, n_bytes, distance
+                sol_table.append((event_table_pos, n_bytes, distance))
+        return sorted(sol_table, key=lambda x: x[2])[0]
+
+    def possible_event_table_pos(fid):
+        """Yield all the possible event table position"""
+        fid.seek(SETUP_EVENTTABLEPOS_OFFSET)
+        event_table_pos = int(np.frombuffer(fid.read(4), dtype='<u4')[0])
+        file_size = fid.seek(0, SEEK_END)
+
+        while event_table_pos <= file_size:
+            yield event_table_pos
+            event_table_pos = event_table_pos + np.iinfo(np.uint32).max + 1
+
     fid_origin = fid.tell()  # save the state
 
     fid.seek(SETUP_NSAMPLES_OFFSET)
-    (n_samples,) = np.frombuffer(fid.read(4), dtype='<i4')
+    n_samples = int(np.frombuffer(fid.read(4), dtype='<i4')[0])
 
     fid.seek(SETUP_NCHANNELS_OFFSET)
-    (n_channels,) = np.frombuffer(fid.read(2), dtype='<u2')
+    n_channels = int(np.frombuffer(fid.read(2), dtype='<u2')[0])
 
-    fid.seek(SETUP_EVENTTABLEPOS_OFFSET)
-    (event_table_pos,) = np.frombuffer(fid.read(4), dtype='<i4')
+    if data_format == 'auto':
+        possible_n_bytes = [2, 4]
+    elif data_format == 'int16':
+        possible_n_bytes = [2]
+    elif data_format == 'int32':
+        possible_n_bytes = [4]
+    else:
+        raise Exception("Correct data format required: 'auto','int16' or 'int32'.")
 
-    n_bytes, event_table_pos = _infer_n_bytes_event_table_pos(event_table_pos)
-
+    event_table_pos, n_bytes, distance = get_most_possible_sol(fid, possible_n_bytes,
+                                                               n_samples, n_channels)
+    if distance != 0:
+        warn("Metadata doesn't match so well, the samples might not loaded completely.")
     fid.seek(fid_origin)  # restore the state
     return n_channels, n_samples, event_table_pos, n_bytes

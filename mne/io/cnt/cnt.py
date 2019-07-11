@@ -17,7 +17,6 @@ from ..meas_info import _empty_info
 from ..base import BaseRaw
 from ...annotations import Annotations
 
-
 from ._utils import (_read_teeg, _get_event_parser, _session_date_2_meas_date,
                      _compute_robust_event_table_position, CNTEventType3)
 
@@ -57,7 +56,7 @@ def _read_annotations_cnt(fname, data_format='to deprecate?'):
         (sfreq,) = np.frombuffer(fid.read(2), dtype='<u2')
 
         n_channels, n_samples, event_table_pos, n_bytes = (
-            _compute_robust_event_table_position(fid))
+            _compute_robust_event_table_position(fid, data_format))
 
     with open(fname, 'rb') as fid:
         teeg = _read_teeg(fid, teeg_offset=event_table_pos)
@@ -224,7 +223,7 @@ def _get_cnt_info(input_fname, eog, ecg, emg, misc, data_format, date_format,
                                                      count=1)[0]
 
         n_channels, n_samples, event_offset, n_bytes = (
-            _compute_robust_event_table_position(fid))
+            _compute_robust_event_table_position(fid, data_format))
 
         # Channel offset refers to the size of blocks per channel in the file.
         cnt_info['channel_offset'] = np.fromfile(fid, dtype='<i4', count=1)[0]
